@@ -1,0 +1,41 @@
+{
+  "name": "globle",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "data": "tsx scripts/build-data.ts",
+    "dev": "npm run data -- --if-missing && vite",
+    "build": "npm run data -- --if-missing && tsc -b && vite build",
+    "build:standalone": "npm run data -- --if-missing && tsc -b && vite build --config vite.standalone.config.ts",
+    "preview": "vite preview",
+    "typecheck": "tsc -b --force",
+    "check": "tsx scripts/check-data.ts"
+  },
+  "dependencies": {
+    "idb-keyval": "^6.2.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-globe.gl": "^2.33.0"
+  },
+  "devDependencies": {
+    "@types/geojson": "^7946.0.16",
+    "@types/node": "^26.4.1",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@types/three": "^0.185.4",
+    "@types/topojson-client": "^3.1.5",
+    "@types/topojson-simplify": "^3.0.3",
+    "@types/topojson-specification": "^1.0.5",
+    "@vitejs/plugin-react": "^4.3.4",
+    "three": "^0.185.1",
+    "topojson-client": "^3.1.0",
+    "topojson-simplify": "^3.0.3",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3",
+    "vite": "^6.0.3",
+    "vite-plugin-singlefile": "^2.0.3",
+    "world-atlas": "^2.0.2",
+    "world-countries": "^5.0.0"
+  }
+}

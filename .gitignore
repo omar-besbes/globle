@@ -1,0 +1,7 @@
+node_modules
+dist
+dist-standalone
+public/data
+*.tsbuildinfo
+*.local
+.DS_Store
