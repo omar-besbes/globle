@@ -5,6 +5,7 @@
  */
 import { readFileSync } from 'node:fs';
 import { buildMatcher, normalize } from '../src/game/data';
+import { SCHEMA_VERSION, parseSaveFile } from '../src/game/storage';
 import type { Country } from '../src/game/types';
 
 const read = (f: string) => JSON.parse(readFileSync(new URL(`../public/data/${f}`, import.meta.url), 'utf8'));
@@ -114,6 +115,29 @@ check('one-character slips never pick another country', overeager.length === 0,
 check('suggestions rank the typo target first', suggest('brasil')[0]?.id === 'BRA',
   `-> ${suggest('brasil')[0]?.name}`);
 check('suggestions cover prefixes', suggest('unit').some((c) => c.id === 'GBR'));
+
+// --- save migration ------------------------------------------------------
+// A v1 export must survive the upgrade: hints did not exist, and the two
+// settings that became "track guesses" and "units" were stored differently.
+const v1Save = JSON.stringify({
+  schemaVersion: 1,
+  exportedAt: 1,
+  games: [{
+    id: 'g1', targetId: 'FRA', startedAt: 1, endedAt: 2, outcome: 'solved',
+    scope: [], strategy: 'adaptive', guesses: [{ input: 'france', at: 2, countryId: 'FRA', distanceKm: 0 }],
+  }],
+  settings: { scope: ['Western Europe'], strategy: 'random', showDistances: false, spinOnGuess: true },
+});
+const migrated = parseSaveFile(v1Save);
+check('v1 save upgrades', migrated.schemaVersion === SCHEMA_VERSION, `-> v${migrated.schemaVersion}`);
+check('v1 games gain hintsUsed', migrated.games[0].hintsUsed === 0);
+check('v1 guesses survive', migrated.games[0].guesses.length === 1);
+check('v1 strategy becomes tracking', migrated.settings.trackGuesses === false);
+check('v1 showDistances becomes units', migrated.settings.units === 'percent',
+  `-> ${migrated.settings.units}`);
+check('v1 scope survives', migrated.settings.scope.join() === 'Western Europe');
+check('rejects a newer save',
+  (() => { try { parseSaveFile('{"schemaVersion":99,"games":[]}'); return false; } catch { return true; } })());
 
 // --- metadata -------------------------------------------------------------
 check('no duplicate ids', new Set(countries.map((c) => c.id)).size === countries.length);

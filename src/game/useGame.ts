@@ -6,6 +6,7 @@ import { pickTarget } from './selection';
 import {
   DEFAULT_SETTINGS, loadGames, loadSettings, saveGames, saveSettings,
 } from './storage';
+import { HINTS } from './types';
 import type { GameRecord, Guess, Settings } from './types';
 
 const CURRENT_KEY = 'globle:current';
@@ -57,7 +58,12 @@ export function useGame(data: DataPack | null) {
     void set(CURRENT_KEY, game);
   }, []);
 
+  /**
+   * Adds a finished game to history. Skipped entirely when tracking is off -
+   * the round still plays out, it just leaves nothing behind.
+   */
   const commit = useCallback((game: GameRecord) => {
+    if (!settingsRef.current.trackGuesses) return;
     const next = [...gamesRef.current, game];
     gamesRef.current = next;
     setGames(next);
@@ -65,9 +71,10 @@ export function useGame(data: DataPack | null) {
   }, []);
 
   // ---- lifecycle --------------------------------------------------------
-  const newGame = useCallback((opts?: { scope?: string[]; strategy?: Settings['strategy'] }) => {
+  const newGame = useCallback((opts?: Partial<Settings>) => {
     if (!data) return;
     const s = { ...settingsRef.current, ...opts };
+    const strategy = s.trackGuesses ? 'adaptive' : 'random';
     const nextPool = poolFor(data.countries, s.scope);
     if (nextPool.length === 0) return;
 
@@ -81,7 +88,7 @@ export function useGame(data: DataPack | null) {
     const target = pickTarget({
       pool: nextPool,
       games: history,
-      strategy: s.strategy,
+      strategy,
       recentTargets: history.slice(-12).map((g) => g.targetId),
     });
     if (!target) return;
@@ -93,7 +100,8 @@ export function useGame(data: DataPack | null) {
       endedAt: null,
       outcome: null,
       scope: s.scope,
-      strategy: s.strategy,
+      strategy,
+      hintsUsed: 0,
       guesses: [],
     });
   }, [data, commit, persistCurrent]);
@@ -132,6 +140,13 @@ export function useGame(data: DataPack | null) {
     return { ok: true, guess: entry, solved };
   }, [data, current, commit, persistCurrent]);
 
+  /** Takes the next hint in HINTS order. Hints count against you in the stats. */
+  const useHint = useCallback(() => {
+    const game = currentRef.current;
+    if (!game || game.outcome || game.hintsUsed >= HINTS.length) return;
+    persistCurrent({ ...game, hintsUsed: game.hintsUsed + 1 });
+  }, [persistCurrent]);
+
   const giveUp = useCallback(() => {
     if (!current || current.outcome) return;
     const next: GameRecord = { ...current, outcome: 'gave_up', endedAt: Date.now() };
@@ -155,6 +170,6 @@ export function useGame(data: DataPack | null) {
 
   return {
     ready, settings, games, current, pool,
-    newGame, guess, giveUp, updateSettings, replaceHistory,
+    newGame, guess, giveUp, useHint, updateSettings, replaceHistory,
   };
 }

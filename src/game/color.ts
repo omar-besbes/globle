@@ -1,3 +1,5 @@
+import type { Units } from './types';
+
 /**
  * Proximity colour ramp.
  *
@@ -37,7 +39,17 @@ export function heatColor(distanceKm: number, maxKm: number, alpha = 1): string 
   return alpha >= 1 ? `rgb(${c[0]},${c[1]},${c[2]})` : `rgba(${c[0]},${c[1]},${c[2]},${alpha})`;
 }
 
-export function formatDistance(km: number): string {
+const MILES_PER_KM = 0.621371;
+
+export function formatDistance(km: number, units: Units, maxKm: number): string {
+  if (units === 'percent') return `${Math.round(proximity(km, maxKm) * 100)}%`;
   if (km === 0) return 'bordering';
+  if (units === 'mi') return `${Math.round(km * MILES_PER_KM).toLocaleString('en-US')} mi`;
   return `${km.toLocaleString('en-US')} km`;
 }
+
+export const UNIT_LABELS: Record<Units, string> = {
+  km: 'Kilometres',
+  mi: 'Miles',
+  percent: 'Closeness (%)',
+};

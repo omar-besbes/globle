@@ -56,8 +56,8 @@ export function StatsPanel({ data, games, settings, onReplaceHistory }: Props) {
 
       <h3>Your weakest countries</h3>
       <p className="hint">
-        Scored from guesses taken, how far off your opening guesses were, time, and give-ups.
-        Adaptive rounds sample from the top of this list.
+        Scored from guesses taken, how far off your opening guesses were, time, hints, and
+        give-ups. While tracking is on, rounds sample from the top of this list.
       </p>
       {hardest.length === 0
         ? <p className="empty">Play a few rounds and this fills in.</p>
@@ -68,7 +68,9 @@ export function StatsPanel({ data, games, settings, onReplaceHistory }: Props) {
                 <span className="weak-name">{data.byId.get(id)?.name ?? id}</span>
                 <span className="weak-bar"><i style={{ width: `${Math.round(w.score * 100)}%` }} /></span>
                 <span className="weak-meta">
-                  {w.plays}× · {w.meanGuesses?.toFixed(1)} avg{w.gaveUp ? ` · ${w.gaveUp} gave up` : ''}
+                  {w.plays}× · {w.meanGuesses?.toFixed(1)} avg
+                  {w.hints ? ` · ${w.hints} hint${w.hints === 1 ? '' : 's'}` : ''}
+                  {w.gaveUp ? ` · ${w.gaveUp} gave up` : ''}
                 </span>
               </li>
             ))}

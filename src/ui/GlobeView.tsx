@@ -10,12 +10,14 @@ interface Props {
   guessed: Map<string, number>;
   revealedId: string | null;
   focusId: string | null;
+  /** Hint state: outlines every country instead of only the guessed ones. */
+  showAllBorders: boolean;
 }
 
 const BASE_ALTITUDE = 0.006;
 const MARKED_ALTITUDE = 0.016;
 
-export function GlobeView({ data, guessed, revealedId, focusId }: Props) {
+export function GlobeView({ data, guessed, revealedId, focusId, showAllBorders }: Props) {
   const globe = useRef<GlobeMethods | undefined>(undefined);
   const wrap = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
@@ -76,8 +78,23 @@ export function GlobeView({ data, guessed, revealedId, focusId }: Props) {
   const altitude = useCallback(
     (f: object) => (idOf(f) === '__base' ? BASE_ALTITUDE : MARKED_ALTITUDE), []);
 
+  /**
+   * Borders come from the extruded side walls between neighbouring countries,
+   * not from the stroke: a stroke line sits at cap height, so an inland border
+   * is hidden by the neighbour's cap and only coastlines ever show. Painting the
+   * base's walls its own cap colour collapses the world into one silhouette;
+   * darkening them again draws every border back in.
+   */
+  const sideColor = useCallback(
+    (f: object) => {
+      if (idOf(f) !== '__base') return '#0b1120';
+      return showAllBorders ? '#0b1120' : NEUTRAL_COLOR;
+    }, [showAllBorders]);
+
+  // A falsy stroke colour makes the layer skip the line object, which also saves
+  // a draw call per country. Guessed countries keep a bright outline.
   const strokeColor = useCallback(
-    (f: object) => (idOf(f) === '__base' ? '#65769b' : '#ffffff'), []);
+    (f: object) => (idOf(f) === '__base' ? null : '#ffffff'), []);
 
   return (
     <div className="globe-wrap" ref={wrap}>
@@ -93,7 +110,7 @@ export function GlobeView({ data, guessed, revealedId, focusId }: Props) {
           atmosphereAltitude={0.16}
           polygonsData={polygons}
           polygonCapColor={capColor}
-          polygonSideColor={() => '#0b1120'}
+          polygonSideColor={sideColor}
           polygonStrokeColor={strokeColor}
           polygonAltitude={altitude}
           polygonsTransitionDuration={0}

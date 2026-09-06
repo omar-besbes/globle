@@ -27,6 +27,10 @@ export interface Guess {
 
 export type Outcome = 'solved' | 'gave_up' | 'abandoned';
 
+/** Hints are ordered: each one gives away more than the last. */
+export const HINTS = ['borders', 'first-letter'] as const;
+export type Hint = (typeof HINTS)[number];
+
 export interface GameRecord {
   id: string;
   targetId: string;
@@ -36,17 +40,26 @@ export interface GameRecord {
   /** Subregions the target was drawn from, for reproducing the context later. */
   scope: string[];
   strategy: Strategy;
+  /** How many hints were taken, in HINTS order. */
+  hintsUsed: number;
   /** Ordered. On a solved game the last entry is the target. */
   guesses: Guess[];
 }
 
 export type Strategy = 'adaptive' | 'random';
 
+export type Units = 'km' | 'mi' | 'percent';
+
 export interface Settings {
   /** Selected subregion names. Empty means the whole world. */
   scope: string[];
-  strategy: Strategy;
-  showDistances: boolean;
+  /**
+   * Whether finished rounds are recorded. Recording is what makes adaptive
+   * targeting possible, so turning it off also drops the game back to picking
+   * uniformly at random.
+   */
+  trackGuesses: boolean;
+  units: Units;
   spinOnGuess: boolean;
 }
 

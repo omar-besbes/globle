@@ -1,7 +1,7 @@
 import { get, set } from 'idb-keyval';
-import type { GameRecord, SaveFile, Settings } from './types';
+import type { GameRecord, SaveFile, Settings, Strategy } from './types';
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 const GAMES_KEY = 'globle:games';
 const SETTINGS_KEY = 'globle:settings';
@@ -9,16 +9,44 @@ const VERSION_KEY = 'globle:schemaVersion';
 
 export const DEFAULT_SETTINGS: Settings = {
   scope: [],
-  strategy: 'adaptive',
-  showDistances: true,
+  trackGuesses: true,
+  units: 'km',
   spinOnGuess: true,
 };
+
+/** Shape of settings before v2, kept so stored preferences survive the upgrade. */
+interface LegacySettings {
+  strategy?: Strategy;
+  showDistances?: boolean;
+}
+
+function migrateSettings(raw: Partial<Settings> & LegacySettings): Settings {
+  const { strategy, showDistances, ...rest } = raw;
+  return {
+    ...DEFAULT_SETTINGS,
+    ...rest,
+    // v1 split these two decisions across a strategy picker and a km toggle.
+    ...(rest.trackGuesses === undefined && strategy !== undefined
+      ? { trackGuesses: strategy === 'adaptive' }
+      : {}),
+    ...(rest.units === undefined && showDistances !== undefined
+      ? { units: showDistances ? ('km' as const) : ('percent' as const) }
+      : {}),
+  };
+}
 
 /**
  * Migrations run oldest-first. Each takes the whole payload and returns the
  * next version's shape, so a v1 save can always be read by a later build.
  */
-const MIGRATIONS: Array<(s: SaveFile) => SaveFile> = [];
+const MIGRATIONS: Array<(s: SaveFile) => SaveFile> = [
+  // v1 -> v2: hints did not exist, so no historic game used one.
+  (save) => ({
+    ...save,
+    games: save.games.map((g) => ({ ...g, hintsUsed: g.hintsUsed ?? 0 })),
+    settings: migrateSettings(save.settings),
+  }),
+];
 
 function migrate(save: SaveFile): SaveFile {
   let out = save;
@@ -47,7 +75,7 @@ export async function saveGames(games: GameRecord[]): Promise<void> {
 }
 
 export async function loadSettings(): Promise<Settings> {
-  return { ...DEFAULT_SETTINGS, ...((await get<Settings>(SETTINGS_KEY)) ?? {}) };
+  return migrateSettings((await get<Partial<Settings> & LegacySettings>(SETTINGS_KEY)) ?? {});
 }
 
 export async function saveSettings(settings: Settings): Promise<void> {
@@ -70,7 +98,7 @@ export function parseSaveFile(text: string): SaveFile {
     schemaVersion: raw.schemaVersion ?? 1,
     exportedAt: raw.exportedAt ?? Date.now(),
     games: raw.games,
-    settings: { ...DEFAULT_SETTINGS, ...(raw.settings ?? {}) },
+    settings: migrateSettings(raw.settings ?? {}),
   });
   return save;
 }

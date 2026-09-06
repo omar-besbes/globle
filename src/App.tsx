@@ -6,14 +6,29 @@ import { GlobeView } from './ui/GlobeView';
 import { GuessInput } from './ui/GuessInput';
 import { GuessList } from './ui/GuessList';
 import { ScopePanel } from './ui/ScopePanel';
+import { SettingsPanel } from './ui/SettingsPanel';
 import { StatsPanel } from './ui/StatsPanel';
+import { HINTS } from './game/types';
 
-type Panel = 'scope' | 'stats' | null;
+type Panel = 'scope' | 'stats' | 'settings' | null;
+
+const PANEL_TITLES: Record<Exclude<Panel, null>, string> = {
+  scope: 'Which countries?',
+  stats: 'Your progress',
+  settings: 'Settings',
+};
+
+/** What the next press of Help me will give away. */
+const HINT_LABELS = [
+  'Outline every country',
+  'Reveal the first letter',
+];
 
 export default function App() {
   const [data, setData] = useState<DataPack | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [panel, setPanel] = useState<Panel>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [focusId, setFocusId] = useState<string | null>(null);
 
@@ -32,10 +47,16 @@ export default function App() {
 
   const over = Boolean(current?.outcome);
   const target = current && data ? data.byId.get(current.targetId) : null;
+  const hintsUsed = current?.hintsUsed ?? 0;
   const closest = useMemo(() => {
     const list = current?.guesses ?? [];
     return list.length ? list.reduce((a, b) => (b.distanceKm < a.distanceKm ? b : a)) : null;
   }, [current]);
+
+  const openPanel = (p: Panel) => {
+    setPanel(p);
+    setMenuOpen(false);
+  };
 
   const submit = (raw: string) => {
     if (!data) return;
@@ -58,12 +79,25 @@ export default function App() {
       <header>
         <h1>Globle<span className="dot">·</span><em>custom</em></h1>
         <nav>
-          <button className={panel === 'scope' ? 'on' : ''} onClick={() => setPanel(panel === 'scope' ? null : 'scope')}>
-            Countries
+          <button
+            className="menu-toggle"
+            aria-label="Menu"
+            aria-expanded={menuOpen}
+            onClick={() => setMenuOpen((v) => !v)}
+          >
+            <span aria-hidden="true">☰</span>
           </button>
-          <button className={panel === 'stats' ? 'on' : ''} onClick={() => setPanel(panel === 'stats' ? null : 'stats')}>
-            Stats
-          </button>
+          <div className={`nav-items ${menuOpen ? 'open' : ''}`}>
+            {(['scope', 'stats', 'settings'] as const).map((p) => (
+              <button
+                key={p}
+                className={panel === p ? 'on' : ''}
+                onClick={() => openPanel(panel === p ? null : p)}
+              >
+                {p === 'scope' ? 'Countries' : p === 'stats' ? 'Stats' : 'Settings'}
+              </button>
+            ))}
+          </div>
         </nav>
       </header>
 
@@ -73,6 +107,7 @@ export default function App() {
           guessed={guessed}
           revealedId={current?.outcome === 'gave_up' ? current.targetId : null}
           focusId={focusId}
+          showAllBorders={hintsUsed >= 1 || over}
         />
 
         <aside>
@@ -81,26 +116,14 @@ export default function App() {
             <span className="pool">{game.pool.length} countries</span>
           </div>
 
-          <div className="mode-line">
-            {(['adaptive', 'random'] as const).map((s) => (
-              <button
-                key={s}
-                className={settings.strategy === s ? 'on' : ''}
-                onClick={() => game.updateSettings({ strategy: s })}
-                title={s === 'adaptive'
-                  ? 'Targets the countries you struggle with most'
-                  : 'Uniformly random from the selected countries'}
-              >{s}</button>
-            ))}
-            <button
-              className={settings.showDistances ? 'on' : ''}
-              onClick={() => game.updateSettings({ showDistances: !settings.showDistances })}
-              title="Show kilometres instead of a closeness percentage"
-            >km</button>
-          </div>
-
           {!over && (
             <GuessInput data={data} disabled={over} error={error} onSubmit={submit} />
+          )}
+
+          {!over && hintsUsed >= 2 && target && (
+            <p className="hint-reveal">
+              The answer starts with <strong>{target.name[0].toUpperCase()}</strong>
+            </p>
           )}
 
           {over && target && (
@@ -121,21 +144,34 @@ export default function App() {
           {!over && closest && (
             <div className="closest" style={{ borderColor: heatColor(closest.distanceKm, data.maxDistanceKm) }}>
               closest so far · {data.byId.get(closest.countryId)?.name} ·{' '}
-              {formatDistance(closest.distanceKm)}
+              {formatDistance(closest.distanceKm, settings.units, data.maxDistanceKm)}
             </div>
           )}
 
           <GuessList
             data={data}
             guesses={current?.guesses ?? []}
-            showDistances={settings.showDistances}
+            units={settings.units}
             onFocus={setFocusId}
           />
 
           {!over && (
             <div className="aside-footer">
-              <button onClick={() => { setFocusId(null); game.newGame(); }}>Skip</button>
-              <button className="danger" onClick={game.giveUp} disabled={!current}>Give up</button>
+              <button
+                className="help"
+                disabled={hintsUsed >= HINTS.length}
+                title={hintsUsed < HINTS.length ? HINT_LABELS[hintsUsed] : undefined}
+                onClick={game.useHint}
+              >
+                {hintsUsed >= HINTS.length ? 'No hints left' : 'Help me'}
+                {hintsUsed < HINTS.length && (
+                  <span className="help-next">{HINT_LABELS[hintsUsed]}</span>
+                )}
+              </button>
+              <div className="aside-footer-row">
+                <button onClick={() => { setFocusId(null); game.newGame(); }}>Skip</button>
+                <button className="danger" onClick={game.giveUp}>Give up</button>
+              </div>
             </div>
           )}
         </aside>
@@ -145,22 +181,32 @@ export default function App() {
         <div className="overlay" onClick={(e) => { if (e.target === e.currentTarget) setPanel(null); }}>
           <section className="panel">
             <div className="panel-head">
-              <h2>{panel === 'scope' ? 'Which countries?' : 'Your progress'}</h2>
+              <h2>{PANEL_TITLES[panel]}</h2>
               <button className="close" onClick={() => setPanel(null)} aria-label="Close">×</button>
             </div>
-            {panel === 'scope'
-              ? <ScopePanel
-                  data={data}
-                  settings={settings}
-                  onChange={game.updateSettings}
-                  onApply={() => { setPanel(null); setFocusId(null); game.newGame(); }}
-                />
-              : <StatsPanel
-                  data={data}
-                  games={game.games}
-                  settings={settings}
-                  onReplaceHistory={game.replaceHistory}
-                />}
+            {panel === 'scope' && (
+              <ScopePanel
+                data={data}
+                settings={settings}
+                onChange={game.updateSettings}
+                onApply={() => { setPanel(null); setFocusId(null); game.newGame(); }}
+              />
+            )}
+            {panel === 'stats' && (
+              <StatsPanel
+                data={data}
+                games={game.games}
+                settings={settings}
+                onReplaceHistory={game.replaceHistory}
+              />
+            )}
+            {panel === 'settings' && (
+              <SettingsPanel
+                settings={settings}
+                recordedGames={game.games.length}
+                onChange={game.updateSettings}
+              />
+            )}
           </section>
         </div>
       )}

@@ -10,11 +10,18 @@ the initial load.
 ## The game
 
 Type a country. Every guess colours in on the globe, warmer the closer it is to
-the answer. Give up and the answer is revealed in purple.
+the answer.
 
-The globe is read-only, and only ever labels countries already on the board.
-Naming an unguessed country — by hovering it, or by clicking it into the guess
-list — would turn the map into a lookup table and hand you the answer.
+The world starts as a plain silhouette with no borders — outlines would give
+away the answer's shape. The globe is read-only for the same reason: it only
+ever labels countries already on the board, because naming an unguessed one
+would turn the map into a lookup table.
+
+**Help me** gives up ground in stages. The first press draws every country's
+borders. The second tells you the answer's first letter. **Give up** is there
+the whole time, hints or not, and reveals the answer in purple. Hints are
+recorded and count against you in the stats — taking one is evidence the country
+was hard for you.
 
 Input is forgiving. Exact names and aliases first (`holland`, `burma`, `uk`,
 `drc`, `ivory coast`), then unique prefixes, then near misses: `swizerland`,
@@ -35,18 +42,23 @@ touching, not 500 km apart.
 the 25 subregions. The answer pool is the 193 UN members present in the map
 data; territories and disputed areas stay guessable but are never the answer.
 
-**How targets are chosen.**
+**Settings** (a tab on desktop, behind the menu on narrow screens):
 
-- *Random* — uniform over the selected pool.
-- *Adaptive* (default) — weighted toward the countries you struggle with.
+- **Track my guesses** — on by default. Recording finished rounds is what makes
+  adaptive targeting possible, so the two are one switch rather than two. Turn it
+  off and rounds leave no trace, with targets drawn uniformly at random instead;
+  history already recorded is kept, not deleted, and clearing it lives under
+  Stats.
+- **Distance units** — kilometres, miles, or closeness as a percentage.
+- **Fly to each guess** — whether the globe rotates to a country when you guess it.
 
-Adaptive scores every country you have played on four signals you actually
-generate: how many guesses it took, how far off your opening guesses were, how
-long you took, and whether you gave up. Recent games count for more than old
-ones (exponential decay), and a country you have not seen in weeks gets a lift
-so the rotation does not collapse onto the same handful. Countries you have
-never been given start from a middling prior, so they enter the rotation without
-dominating it.
+While tracking is on, every country you have played is scored on five signals you
+actually generate: how many guesses it took, how far off your opening guesses
+were, how long you took, how many hints you took, and whether you gave up. Recent
+games count for more than old ones (exponential decay), and a country you have
+not seen in weeks gets a lift so the rotation does not collapse onto the same
+handful. Countries you have never been given start from a middling prior, so they
+enter the rotation without dominating it.
 
 See `src/game/selection.ts` — the weights are all in one place and easy to tune.
 
@@ -58,7 +70,7 @@ Every round is stored locally in IndexedDB as a full record:
 {
   id, targetId, startedAt, endedAt,
   outcome: 'solved' | 'gave_up' | 'abandoned',
-  scope, strategy,
+  scope, strategy, hintsUsed,
   guesses: [{ input, at, countryId, distanceKm }]
 }
 ```
@@ -70,7 +82,8 @@ any round later.
 The Stats panel exports and imports this as JSON, so you can move history
 between browsers. Imports merge by game id rather than overwriting. The save
 format is versioned (`SCHEMA_VERSION` in `src/game/storage.ts`) with a migration
-chain, so old exports keep working.
+chain, so old exports keep working — `npm run check` round-trips a v1 save
+through it.
 
 ## Running it
 
@@ -126,7 +139,13 @@ At runtime the entire world is drawn as **one static feature**, and only the
 countries you have marked get their own mesh floating just above it. That takes
 a 239-object scene down to roughly `1 + guesses`.
 
-Net effect: ~4,800 draw calls a frame becomes ~1,100.
+Net effect: ~4,800 draw calls a frame becomes ~1,100, and hiding borders by
+default removes the stroke line object per country on top of that.
+
+Borders are the extruded side walls between neighbouring countries, not the
+stroke. A stroke line sits at cap height, so an inland border is hidden by the
+neighbour's cap and only coastlines ever draw — which is why the borders hint
+recolours the walls instead of turning strokes on.
 
 ### Things that will bite you if you fork this
 

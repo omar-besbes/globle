@@ -1,12 +1,14 @@
+import { HINTS } from './types';
 import type { Country, GameRecord } from './types';
 
 /**
  * Per-country difficulty, learned from play history.
  *
- * Each finished game yields a difficulty in [0,1] from four signals the player
+ * Each finished game yields a difficulty in [0,1] from five signals the player
  * actually generates: how many guesses it took, how far off the opening guesses
- * were, how long it took, and whether they gave up. Games are combined with an
- * exponential recency weight so recent evidence dominates.
+ * were, how long it took, how many hints they took, and whether they gave up.
+ * Games are combined with an exponential recency weight so recent evidence
+ * dominates.
  */
 export interface Weakness {
   /** 0 = easy for this player, 1 = hard. UNSEEN_PRIOR when never played. */
@@ -16,6 +18,7 @@ export interface Weakness {
   solved: number;
   gaveUp: number;
   meanGuesses: number | null;
+  hints: number;
 }
 
 export const UNSEEN_PRIOR = 0.55;
@@ -39,10 +42,11 @@ function gameDifficulty(g: GameRecord): number {
   const seconds = g.endedAt ? (g.endedAt - g.startedAt) / 1000 : TIME_CEIL_S;
 
   return Math.min(1,
-    0.35 * norm(guesses, GUESS_FLOOR, GUESS_CEIL) +
-    0.30 * norm(meanOpeningError, 0, ERROR_CEIL_KM) +
+    0.30 * norm(guesses, GUESS_FLOOR, GUESS_CEIL) +
+    0.25 * norm(meanOpeningError, 0, ERROR_CEIL_KM) +
     0.15 * norm(seconds, TIME_FLOOR_S, TIME_CEIL_S) +
-    0.20 * (g.outcome === 'gave_up' ? 1 : 0));
+    0.15 * norm(g.hintsUsed ?? 0, 0, HINTS.length) +
+    0.15 * (g.outcome === 'gave_up' ? 1 : 0));
 }
 
 export function weaknessByCountry(games: GameRecord[]): Map<string, Weakness> {
@@ -69,13 +73,17 @@ export function weaknessByCountry(games: GameRecord[]): Map<string, Weakness> {
       solved: list.filter((g) => g.outcome === 'solved').length,
       gaveUp: list.filter((g) => g.outcome === 'gave_up').length,
       meanGuesses: list.reduce((s, g) => s + g.guesses.length, 0) / list.length,
+      hints: list.reduce((s, g) => s + (g.hintsUsed ?? 0), 0),
     });
   }
   return out;
 }
 
 export function weaknessFor(id: string, map: Map<string, Weakness>): Weakness {
-  return map.get(id) ?? { score: UNSEEN_PRIOR, plays: 0, lastPlayedAt: null, solved: 0, gaveUp: 0, meanGuesses: null };
+  return map.get(id) ?? {
+    score: UNSEEN_PRIOR, plays: 0, lastPlayedAt: null,
+    solved: 0, gaveUp: 0, meanGuesses: null, hints: 0,
+  };
 }
 
 /**
