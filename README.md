@@ -9,9 +9,20 @@ the initial load.
 
 ## The game
 
-Guess a country. Every guess colours in on the globe, warmer the closer it is to
-the answer. Guess by typing, or by clicking the globe directly. Give up and the
-answer is revealed in purple.
+Type a country. Every guess colours in on the globe, warmer the closer it is to
+the answer. Give up and the answer is revealed in purple.
+
+The globe is read-only, and only ever labels countries already on the board.
+Naming an unguessed country — by hovering it, or by clicking it into the guess
+list — would turn the map into a lookup table and hand you the answer.
+
+Input is forgiving. Exact names and aliases first (`holland`, `burma`, `uk`,
+`drc`, `ivory coast`), then unique prefixes, then near misses: `swizerland`,
+`phillipines`, `kenia`, `untied states` all land. Tolerance scales with what you
+typed — a four-letter word gets none, because Iran and Iraq are one edit apart —
+and a typo is only accepted when exactly one country is closest. `sambia`
+resolves to Zambia; `ambia` ties Zambia with Gambia and is rejected rather than
+scoring a guess against the wrong country.
 
 Distance is the **minimum distance between borders**, not between centroids,
 which is what makes the hot/cold signal feel right — Portugal and Spain are
@@ -117,10 +128,6 @@ a 239-object scene down to roughly `1 + guesses`.
 
 Net effect: ~4,800 draw calls a frame becomes ~1,100.
 
-Because the coastline is simplified, a click on Sydney or Manhattan lands
-slightly out to sea, so hit-testing falls back to the nearest coastline within
-260 km before calling it open water.
-
 ### Things that will bite you if you fork this
 
 - Natural Earth's `ISO_A3` is `-99` for France, Norway, Kosovo, Northern Cyprus
@@ -135,6 +142,10 @@ slightly out to sea, so hit-testing falls back to the nearest coastline within
   to change.
 - Aliases claimed by more than one country are dropped, unless the alias is one
   country's own name.
+- Fuzzy matching has to be kept on a leash. `scripts/check-data.ts` asserts that
+  no single-character slip in any country's name resolves to a *different*
+  country — it is the check that catches an over-eager matcher, and it caught
+  two while this was being written.
 
 ## Licence
 

@@ -46,7 +46,7 @@ export default function App() {
       return;
     }
     setError(res.reason === 'unknown'
-      ? `“${raw.trim()}” is not a country I know.`
+      ? `No country matches “${raw.trim()}”.`
       : res.reason === 'duplicate' ? 'You already guessed that one.' : null);
   };
 
@@ -73,7 +73,6 @@ export default function App() {
           guessed={guessed}
           revealedId={current?.outcome === 'gave_up' ? current.targetId : null}
           focusId={focusId}
-          onPick={(id) => submit(data.byId.get(id)?.name ?? id)}
         />
 
         <aside>

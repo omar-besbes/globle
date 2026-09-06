@@ -36,7 +36,7 @@ export function GuessInput({ data, disabled, error, onSubmit }: Props) {
         type="text"
         value={value}
         disabled={disabled}
-        placeholder={disabled ? 'Round over' : 'Guess a country…'}
+        placeholder={disabled ? 'Round over' : 'Type a country…'}
         autoComplete="off"
         autoCorrect="off"
         spellCheck={false}

@@ -4,7 +4,7 @@
  * matrix and click hit-testing.
  */
 import { readFileSync } from 'node:fs';
-import { buildLocator } from '../src/game/data';
+import { buildMatcher, normalize } from '../src/game/data';
 import type { Country } from '../src/game/types';
 
 const read = (f: string) => JSON.parse(readFileSync(new URL(`../public/data/${f}`, import.meta.url), 'utf8'));
@@ -49,23 +49,71 @@ let missing = 0;
 for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) if (dist[at(i, j)] === 0) missing++;
 check('few zero pairs', missing < 400, `${missing} zero-distance pairs`);
 
-// --- hit testing ----------------------------------------------------------
-const locate = buildLocator(geo.features, byId);
-const points: Array<[number, number, string | null]> = [
-  [48.85, 2.35, 'FRA'],    // Paris
-  [-15.79, -47.88, 'BRA'], // Brasilia
-  [35.68, 139.69, 'JPN'],  // Tokyo
-  [-33.87, 151.21, 'AUS'], // Sydney
-  [55.75, 37.62, 'RUS'],   // Moscow
-  [1.29, 32.29, 'UGA'],    // central Uganda
-  [40.71, -74.0, 'USA'],   // New York
-  [0, -30, null],          // mid-Atlantic
-  [-40, -140, null],       // south Pacific
+// --- typed input ----------------------------------------------------------
+const { resolve, suggest } = buildMatcher(countries);
+const R = (q: string) => resolve(q)?.id ?? null;
+
+// Aliases people actually type.
+const aliases: Array<[string, string]> = [
+  ['holland', 'NLD'], ['burma', 'MMR'], ['uk', 'GBR'], ['usa', 'USA'],
+  ['ivory coast', 'CIV'], ['south korea', 'KOR'], ['drc', 'COD'], ['east timor', 'TLS'],
 ];
-for (const [lat, lng, expected] of points) {
-  const got = locate(lat, lng);
-  check(`locate ${lat},${lng}`, (got?.id ?? null) === expected, `-> ${got?.name ?? 'water'}`);
+for (const [q, id] of aliases) check(`alias "${q}"`, R(q) === id, `-> ${R(q)}`);
+
+// Typos and misspellings that should still land.
+const typos: Array<[string, string]> = [
+  ['brasil', 'BRA'], ['phillipines', 'PHL'], ['swizerland', 'CHE'], ['kenia', 'KEN'],
+  ['untied states', 'USA'], ['germny', 'DEU'], ['argentna', 'ARG'], ['netherlads', 'NLD'],
+  ['madagascer', 'MDG'], ['kazakstan', 'KAZ'],
+];
+for (const [q, id] of typos) check(`typo "${q}"`, R(q) === id, `-> ${R(q)}`);
+
+// Near-miss pairs must never silently resolve to their neighbour.
+const exactPairs = ['Iran', 'Iraq', 'Niger', 'Nigeria', 'Austria', 'Australia', 'Chad', 'Chile',
+  'China', 'Mali', 'Malta', 'Zambia', 'Gambia', 'Guinea', 'Guyana', 'Oman', 'Romania',
+  'India', 'Indonesia', 'Slovakia', 'Slovenia', 'Norway', 'Nauru'];
+for (const name of exactPairs) {
+  const c = countries.find((x) => x.name === name);
+  check(`exact "${name}"`, c !== undefined && R(name) === c.id, `-> ${R(name)}`);
 }
+
+// Ambiguity and nonsense are rejected rather than guessed at.
+for (const q of ['ambia', 'united', 'qqqqqq', 'zzzz', 'the country that is not', 'mata']) {
+  check(`rejects "${q}"`, R(q) === null, `-> ${R(q)}`);
+}
+check('rejects empty', R('   ') === null);
+
+/**
+ * The property that matters: mangling a country's name by one character must
+ * never quietly score a guess against a DIFFERENT country. Resolving to the
+ * intended country or to nothing are both fine, and so is completing a prefix -
+ * "austra" is a reasonable start on Australia even though it is also Austria
+ * with a letter dropped. Anything else is the matcher being too eager.
+ */
+function mutationsOf(name: string): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < name.length; i++) out.push(name.slice(0, i) + name.slice(i + 1));
+  for (let i = 0; i + 1 < name.length; i++) {
+    out.push(name.slice(0, i) + name[i + 1] + name[i] + name.slice(i + 2));
+  }
+  return out;
+}
+
+const overeager: string[] = [];
+for (const c of countries) {
+  for (const q of mutationsOf(normalize(c.name))) {
+    const got = resolve(q);
+    if (!got || got.id === c.id) continue;
+    if (normalize(got.name).startsWith(q)) continue; // completing a real name
+    overeager.push(`"${q}" (${c.name}) -> ${got.name}`);
+  }
+}
+check('one-character slips never pick another country', overeager.length === 0,
+  overeager.length ? `${overeager.length} cases, e.g. ${overeager.slice(0, 4).join('; ')}` : '');
+
+check('suggestions rank the typo target first', suggest('brasil')[0]?.id === 'BRA',
+  `-> ${suggest('brasil')[0]?.name}`);
+check('suggestions cover prefixes', suggest('unit').some((c) => c.id === 'GBR'));
 
 // --- metadata -------------------------------------------------------------
 check('no duplicate ids', new Set(countries.map((c) => c.id)).size === countries.length);

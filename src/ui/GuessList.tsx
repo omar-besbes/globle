@@ -11,7 +11,7 @@ interface Props {
 
 export function GuessList({ data, guesses, showDistances, onFocus }: Props) {
   if (guesses.length === 0) {
-    return <p className="empty">No guesses yet. Type a country, or click one on the globe.</p>;
+    return <p className="empty">No guesses yet. Type any country to start narrowing it down.</p>;
   }
   // Closest first: the ranking is the actual feedback signal.
   const ordered = [...guesses].sort((a, b) => a.distanceKm - b.distanceKm);

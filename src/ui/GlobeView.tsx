@@ -10,13 +10,12 @@ interface Props {
   guessed: Map<string, number>;
   revealedId: string | null;
   focusId: string | null;
-  onPick(id: string): void;
 }
 
 const BASE_ALTITUDE = 0.006;
 const MARKED_ALTITUDE = 0.016;
 
-export function GlobeView({ data, guessed, revealedId, focusId, onPick }: Props) {
+export function GlobeView({ data, guessed, revealedId, focusId }: Props) {
   const globe = useRef<GlobeMethods | undefined>(undefined);
   const wrap = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
@@ -80,17 +79,6 @@ export function GlobeView({ data, guessed, revealedId, focusId, onPick }: Props)
   const strokeColor = useCallback(
     (f: object) => (idOf(f) === '__base' ? '#65769b' : '#ffffff'), []);
 
-  /**
-   * Clicks are resolved from the hit coordinates rather than from the clicked
-   * mesh, because the base mesh covers every country at once. Both handlers are
-   * wired: whether the ray lands on a polygon or on the globe surface behind it
-   * depends on the renderer, and either way the coordinates are what matter.
-   */
-  const pickAt = useCallback((lat: number, lng: number) => {
-    const hit = data.locate(lat, lng);
-    if (hit) onPick(hit.id);
-  }, [data, onPick]);
-
   return (
     <div className="globe-wrap" ref={wrap}>
       {size.w > 0 && (
@@ -113,12 +101,10 @@ export function GlobeView({ data, guessed, revealedId, focusId, onPick }: Props)
             const id = f ? idOf(f) : null;
             setHover(id && id !== '__base' ? id : null);
           }}
-          onGlobeClick={({ lat, lng }: { lat: number; lng: number }) => pickAt(lat, lng)}
-          onPolygonClick={((_f: object, _ev: MouseEvent, c: { lat: number; lng: number }) =>
-            pickAt(c.lat, c.lng)) as never}
         />
       )}
-      {/* Only ever names countries already on the board, so hovering cannot leak the answer. */}
+      {/* The globe is read-only: guesses are typed. It only ever names countries
+          already on the board, so neither hovering nor clicking can leak an answer. */}
       {hover && <div className="globe-tooltip">{data.byId.get(hover)?.name}</div>}
     </div>
   );

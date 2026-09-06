@@ -16,8 +16,6 @@ export interface DataPack {
   maxDistanceKm: number;
   distanceKm(a: string, b: string): number;
   resolve(input: string): Country | null;
-  /** Country under a lat/lng, or null over water. */
-  locate(lat: number, lng: number): Country | null;
   /** Every country's border rings in one feature, for a single-mesh base map. */
   baseFeature: CountryFeature;
   /** Ranked completions for the type-ahead. */
@@ -75,41 +73,9 @@ export async function loadData(): Promise<DataPack> {
     return dist[at(i, j)];
   }
 
-  const aliasIndex = new Map<string, Country>();
-  for (const c of countries) for (const a of c.aliases) if (!aliasIndex.has(a)) aliasIndex.set(a, c);
-
-  function resolve(input: string): Country | null {
-    const q = normalize(input);
-    if (!q) return null;
-    const exact = aliasIndex.get(q);
-    if (exact) return exact;
-    // Unique prefix match, so "united arab" resolves but "united" stays ambiguous.
-    const hits = countries.filter((c) => c.aliases.some((a) => a.startsWith(q)));
-    const unique = new Set(hits.map((c) => c.id));
-    return unique.size === 1 ? hits[0] : null;
-  }
-
-  function suggest(input: string, limit = 6): Country[] {
-    const q = normalize(input);
-    if (!q) return [];
-    const scored: Array<[Country, number]> = [];
-    for (const c of countries) {
-      let best = Infinity;
-      for (const a of c.aliases) {
-        if (a === q) best = Math.min(best, 0);
-        else if (a.startsWith(q)) best = Math.min(best, 1);
-        else if (a.includes(q)) best = Math.min(best, 2);
-      }
-      // Prefer the canonical name over an obscure alias at the same match quality.
-      if (best < Infinity) scored.push([c, best * 10 + (normalize(c.name).startsWith(q) ? 0 : 1)]);
-    }
-    scored.sort((a, b) => a[1] - b[1] || a[0].name.localeCompare(b[0].name));
-    return scored.slice(0, limit).map(([c]) => c);
-  }
+  const { resolve, suggest } = buildMatcher(countries);
 
   const features = geo.features.filter((f) => byId.has(f.properties.id));
-
-  const locate = buildLocator(features, byId);
 
   const baseFeature: CountryFeature = {
     type: 'Feature',
@@ -124,7 +90,7 @@ export async function loadData(): Promise<DataPack> {
   return {
     countries, byId, index, features, baseFeature,
     maxDistanceKm: meta.maxDistanceKm,
-    distanceKm, resolve, suggest, locate,
+    distanceKm, resolve, suggest,
   };
 }
 
@@ -135,81 +101,147 @@ export function polygonsOf(f: CountryFeature): Ring[][] {
   return (g.type === 'Polygon' ? [g.coordinates] : g.coordinates) as unknown as Ring[][];
 }
 
-/** A click this far outside a coastline still counts as hitting that country. */
-const COAST_TOLERANCE_KM = 260;
-
 /**
- * Resolves a lat/lng to a country. Bounding boxes cut the work to a handful of
- * ring tests, which keeps a click on the globe cheap enough to run inline.
- *
- * Render geometry is heavily simplified, so coastlines sit inland of where they
- * really are and a click on Sydney or Manhattan lands in the sea. When no
- * polygon contains the point we fall back to the nearest coastline within a
- * tolerance, and only call it open water beyond that.
+ * Typo tolerance. A short word has no room for a mistake without colliding with
+ * another country - Iran and Iraq are one edit apart - so the budget scales with
+ * what was typed.
  */
-export function buildLocator(
-  features: CountryFeature[],
-  byId: Map<string, Country>,
-): (lat: number, lng: number) => Country | null {
-  const boxes = features.map((f) => {
-    let minLng = 180, minLat = 90, maxLng = -180, maxLat = -90;
-    for (const poly of polygonsOf(f)) for (const [lng, lat] of poly[0]) {
-      if (lng < minLng) minLng = lng;
-      if (lng > maxLng) maxLng = lng;
-      if (lat < minLat) minLat = lat;
-      if (lat > maxLat) maxLat = lat;
-    }
-    return { f, minLng, minLat, maxLng, maxLat };
-  });
-
-  // Flat vertex list for the coastline fallback.
-  const vLng: number[] = [];
-  const vLat: number[] = [];
-  const vOwner: string[] = [];
-  for (const f of features) {
-    for (const poly of polygonsOf(f)) for (const ring of poly) for (const [lng, lat] of ring) {
-      vLng.push(lng); vLat.push(lat); vOwner.push(f.properties.id);
-    }
-  }
-
-  return (lat, lng) => {
-    for (const b of boxes) {
-      if (lng < b.minLng || lng > b.maxLng || lat < b.minLat || lat > b.maxLat) continue;
-      for (const poly of polygonsOf(b.f)) {
-        // The outer ring must contain the point and no hole may exclude it.
-        if (!pointInRing(lng, lat, poly[0])) continue;
-        if (poly.slice(1).some((hole) => pointInRing(lng, lat, hole))) continue;
-        return byId.get(b.f.properties.id) ?? null;
-      }
-    }
-
-    const kmPerDegLng = 111.32 * Math.cos((lat * Math.PI) / 180);
-    const limit = COAST_TOLERANCE_KM ** 2;
-    let best = Infinity;
-    let owner: string | null = null;
-    for (let i = 0; i < vLng.length; i++) {
-      let dLng = vLng[i] - lng;
-      if (dLng > 180) dLng -= 360; else if (dLng < -180) dLng += 360;
-      const dx = dLng * kmPerDegLng;
-      const dy = (vLat[i] - lat) * 110.57;
-      const d2 = dx * dx + dy * dy;
-      if (d2 < best) { best = d2; owner = vOwner[i]; }
-    }
-    return best <= limit && owner ? byId.get(owner) ?? null : null;
-  };
+function editBudget(len: number): number {
+  if (len <= 4) return 0;
+  if (len <= 7) return 1;
+  if (len <= 11) return 2;
+  return 3;
 }
 
-/** Standard even-odd ray casting in lng/lat space. */
-function pointInRing(lng: number, lat: number, ring: Ring): boolean {
-  let inside = false;
-  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-    const [xi, yi] = ring[i];
-    const [xj, yj] = ring[j];
-    if ((yi > lat) !== (yj > lat) && lng < ((xj - xi) * (lat - yi)) / (yj - yi) + xi) {
-      inside = !inside;
+/**
+ * Optimal string alignment distance: Levenshtein plus adjacent transpositions,
+ * so "untied states" costs one edit rather than two. Bails out early once the
+ * row minimum exceeds the budget.
+ */
+function editDistance(a: string, b: string, max: number): number {
+  if (Math.abs(a.length - b.length) > max) return max + 1;
+  let prev2: number[] = [];
+  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  let curr: number[] = new Array(b.length + 1);
+
+  for (let i = 1; i <= a.length; i++) {
+    curr[0] = i;
+    let rowMin = i;
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      let v = Math.min(prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + cost);
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) {
+        v = Math.min(v, prev2[j - 2] + 1);
+      }
+      curr[j] = v;
+      if (v < rowMin) rowMin = v;
     }
+    if (rowMin > max) return max + 1;
+    prev2 = prev;
+    prev = curr;
+    curr = new Array(b.length + 1);
   }
-  return inside;
+  return prev[b.length];
+}
+
+export interface Matcher {
+  resolve(input: string): Country | null;
+  suggest(input: string, limit?: number): Country[];
+}
+
+/**
+ * Turns what the player typed into a country.
+ *
+ * Matching runs in order of confidence: an exact alias, then a unique prefix,
+ * then a near-miss within the edit budget. A fuzzy match is only accepted when
+ * exactly one country is closest - "sambia" is one edit from Zambia and two from
+ * Gambia so it resolves, while "ambia" ties them and is rejected rather than
+ * silently guessing the wrong country.
+ */
+export function buildMatcher(countries: Country[]): Matcher {
+  const aliasIndex = new Map<string, Country>();
+  for (const c of countries) for (const a of c.aliases) if (!aliasIndex.has(a)) aliasIndex.set(a, c);
+  const canonical = new Map(countries.map((c) => [c.id, normalize(c.name)]));
+
+  // Match quality, lower is better. The ordering that matters: completing a
+  // country's own name beats everything except an exact hit, a plausible typo
+  // beats burrowing into the middle of some other country's official title
+  // ("boliva" is Bolivia misspelt, not the start of "Bolivarian Republic of
+  // Venezuela"), and a typo two edits out still beats it.
+  const EXACT = 0;
+  const NAME_PREFIX = 0.5;
+  const ALIAS_PREFIX = 3.5;
+
+  // A few letters shared with the front of some long official title is not
+  // evidence of anything - "mata" should not land on Fiji because one of its
+  // endonyms is "Matanitu Tugalala o Viti". Prefixes of an alias that is not the
+  // country's own name have to be substantial to count.
+  const prefixCounts = (q: string, alias: string) => q.length >= 4 && q.length * 2 >= alias.length;
+
+  function score(c: Country, q: string, budget: number): number {
+    let best = Infinity;
+    const name = canonical.get(c.id)!;
+    for (const a of c.aliases) {
+      if (a === q) return EXACT;
+      if (!a.startsWith(q)) continue;
+      if (a === name) best = Math.min(best, NAME_PREFIX);
+      else if (prefixCounts(q, a)) best = Math.min(best, ALIAS_PREFIX);
+    }
+    if (budget > 0) {
+      for (const a of c.aliases) {
+        if (Math.abs(a.length - q.length) > budget) continue;
+        const d = editDistance(q, a, budget);
+        if (d <= budget) best = Math.min(best, d);
+      }
+    }
+    return best;
+  }
+
+  function rank(q: string): { best: number; winners: Country[] } {
+    const budget = editBudget(q.length);
+    let best = Infinity;
+    let winners: Country[] = [];
+    for (const c of countries) {
+      const s = score(c, q, budget);
+      if (s === Infinity) continue;
+      if (s < best) { best = s; winners = [c]; }
+      else if (s === best) winners.push(c);
+    }
+    return { best, winners };
+  }
+
+  /**
+   * Resolves what the player typed, or nothing. A match is only accepted when a
+   * single country is strictly the closest: "sambia" is one edit from Zambia and
+   * two from Gambia so it resolves, while "ambia" ties them and is rejected
+   * rather than silently scoring a guess against the wrong country.
+   */
+  function resolve(input: string): Country | null {
+    const q = normalize(input);
+    if (!q) return null;
+    const exact = aliasIndex.get(q);
+    if (exact) return exact;
+    const { winners } = rank(q);
+    return winners.length === 1 ? winners[0] : null;
+  }
+
+  function suggest(input: string, limit = 6): Country[] {
+    const q = normalize(input);
+    if (!q) return [];
+    const budget = editBudget(q.length);
+    const scored: Array<[Country, number]> = [];
+    for (const c of countries) {
+      let s = score(c, q, budget);
+      // Substrings are useful for browsing the list even though they are too
+      // weak to resolve a guess on their own.
+      if (s === Infinity && c.aliases.some((a) => a.includes(q))) s = ALIAS_PREFIX + 1;
+      if (s < Infinity) scored.push([c, s]);
+    }
+    scored.sort((a, b) => a[1] - b[1] || a[0].name.localeCompare(b[0].name));
+    return scored.slice(0, limit).map(([c]) => c);
+  }
+
+  return { resolve, suggest };
 }
 
 /** Subregions grouped by continent, for the scope picker. */
