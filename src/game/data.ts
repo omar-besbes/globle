@@ -15,12 +15,22 @@ export interface DataPack {
   features: CountryFeature[];
   maxDistanceKm: number;
   distanceKm(a: string, b: string): number;
-  resolve(input: string): Country | null;
+  match(input: string): MatchResult;
   /** Every country's border rings in one feature, for a single-mesh base map. */
   baseFeature: CountryFeature;
-  /** Ranked completions for the type-ahead. */
-  suggest(input: string, limit?: number): Country[];
 }
+
+/**
+ * What the player typed resolved into one of three outcomes.
+ *
+ * `exact` is taken as the guess without asking. `suggest` is a near miss the
+ * player has to confirm, so a misspelling never silently scores against a
+ * country they did not mean. `none` is text that resembles nothing.
+ */
+export type MatchResult =
+  | { kind: 'exact'; country: Country }
+  | { kind: 'suggest'; candidates: Country[] }
+  | { kind: 'none' };
 
 export const normalize = (s: string) =>
   s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
@@ -73,7 +83,7 @@ export async function loadData(): Promise<DataPack> {
     return dist[at(i, j)];
   }
 
-  const { resolve, suggest } = buildMatcher(countries);
+  const { match } = buildMatcher(countries);
 
   const features = geo.features.filter((f) => byId.has(f.properties.id));
 
@@ -90,7 +100,7 @@ export async function loadData(): Promise<DataPack> {
   return {
     countries, byId, index, features, baseFeature,
     maxDistanceKm: meta.maxDistanceKm,
-    distanceKm, resolve, suggest,
+    distanceKm, match,
   };
 }
 
@@ -102,14 +112,14 @@ export function polygonsOf(f: CountryFeature): Ring[][] {
 }
 
 /**
- * Typo tolerance. A short word has no room for a mistake without colliding with
- * another country - Iran and Iraq are one edit apart - so the budget scales with
- * what was typed.
+ * Typo tolerance, scaled to what was typed. A near miss is only ever offered as
+ * a suggestion the player confirms, never accepted outright, so this can be
+ * generous: proposing Iran when someone meant Iraq costs a glance, not a guess.
  */
 function editBudget(len: number): number {
-  if (len <= 4) return 0;
-  if (len <= 7) return 1;
-  if (len <= 11) return 2;
+  if (len <= 3) return 0;
+  if (len <= 6) return 1;
+  if (len <= 10) return 2;
   return 3;
 }
 
@@ -145,37 +155,30 @@ function editDistance(a: string, b: string, max: number): number {
 }
 
 export interface Matcher {
-  resolve(input: string): Country | null;
-  suggest(input: string, limit?: number): Country[];
+  match(input: string): MatchResult;
 }
 
-/**
- * Turns what the player typed into a country.
- *
- * Matching runs in order of confidence: an exact alias, then a unique prefix,
- * then a near-miss within the edit budget. A fuzzy match is only accepted when
- * exactly one country is closest - "sambia" is one edit from Zambia and two from
- * Gambia so it resolves, while "ambia" ties them and is rejected rather than
- * silently guessing the wrong country.
- */
+/** Most suggestions are a single country; ties show a short list instead. */
+const MAX_SUGGESTIONS = 2;
+
 export function buildMatcher(countries: Country[]): Matcher {
   const aliasIndex = new Map<string, Country>();
   for (const c of countries) for (const a of c.aliases) if (!aliasIndex.has(a)) aliasIndex.set(a, c);
   const canonical = new Map(countries.map((c) => [c.id, normalize(c.name)]));
 
-  // Match quality, lower is better. The ordering that matters: completing a
-  // country's own name beats everything except an exact hit, a plausible typo
-  // beats burrowing into the middle of some other country's official title
-  // ("boliva" is Bolivia misspelt, not the start of "Bolivarian Republic of
-  // Venezuela"), and a typo two edits out still beats it.
+  // Match quality, lower is better. Completing a name and misspelling one are
+  // different kinds of evidence, not just different amounts: the prefix tiers
+  // are taken as deliberate, the edit-distance tiers in between are treated as
+  // guesses about what was meant.
   const EXACT = 0;
   const NAME_PREFIX = 0.5;
   const ALIAS_PREFIX = 3.5;
+  const isDeliberate = (s: number) =>
+    s === EXACT || s === NAME_PREFIX || s === ALIAS_PREFIX;
 
   // A few letters shared with the front of some long official title is not
-  // evidence of anything - "mata" should not land on Fiji because one of its
-  // endonyms is "Matanitu Tugalala o Viti". Prefixes of an alias that is not the
-  // country's own name have to be substantial to count.
+  // evidence of anything - "mata" should not reach Fiji because one of its
+  // endonyms is "Matanitu Tugalala o Viti".
   const prefixCounts = (q: string, alias: string) => q.length >= 4 && q.length * 2 >= alias.length;
 
   function score(c: Country, q: string, budget: number): number {
@@ -197,7 +200,13 @@ export function buildMatcher(countries: Country[]): Matcher {
     return best;
   }
 
-  function rank(q: string): { best: number; winners: Country[] } {
+  function match(input: string): MatchResult {
+    const q = normalize(input);
+    if (!q) return { kind: 'none' };
+
+    const exact = aliasIndex.get(q);
+    if (exact) return { kind: 'exact', country: exact };
+
     const budget = editBudget(q.length);
     let best = Infinity;
     let winners: Country[] = [];
@@ -207,41 +216,22 @@ export function buildMatcher(countries: Country[]): Matcher {
       if (s < best) { best = s; winners = [c]; }
       else if (s === best) winners.push(c);
     }
-    return { best, winners };
-  }
+    if (winners.length === 0) return { kind: 'none' };
 
-  /**
-   * Resolves what the player typed, or nothing. A match is only accepted when a
-   * single country is strictly the closest: "sambia" is one edit from Zambia and
-   * two from Gambia so it resolves, while "ambia" ties them and is rejected
-   * rather than silently scoring a guess against the wrong country.
-   */
-  function resolve(input: string): Country | null {
-    const q = normalize(input);
-    if (!q) return null;
-    const exact = aliasIndex.get(q);
-    if (exact) return exact;
-    const { winners } = rank(q);
-    return winners.length === 1 ? winners[0] : null;
-  }
-
-  function suggest(input: string, limit = 6): Country[] {
-    const q = normalize(input);
-    if (!q) return [];
-    const budget = editBudget(q.length);
-    const scored: Array<[Country, number]> = [];
-    for (const c of countries) {
-      let s = score(c, q, budget);
-      // Substrings are useful for browsing the list even though they are too
-      // weak to resolve a guess on their own.
-      if (s === Infinity && c.aliases.some((a) => a.includes(q))) s = ALIAS_PREFIX + 1;
-      if (s < Infinity) scored.push([c, s]);
+    // One country, reached by completing a name it actually has: take it.
+    if (winners.length === 1 && isDeliberate(best)) {
+      return { kind: 'exact', country: winners[0] };
     }
-    scored.sort((a, b) => a[1] - b[1] || a[0].name.localeCompare(b[0].name));
-    return scored.slice(0, limit).map(([c]) => c);
+
+    winners.sort((a, b) => {
+      const aStarts = canonical.get(a.id)!.startsWith(q) ? 0 : 1;
+      const bStarts = canonical.get(b.id)!.startsWith(q) ? 0 : 1;
+      return aStarts - bStarts || a.name.localeCompare(b.name);
+    });
+    return { kind: 'suggest', candidates: winners.slice(0, MAX_SUGGESTIONS) };
   }
 
-  return { resolve, suggest };
+  return { match };
 }
 
 /** Subregions grouped by continent, for the scope picker. */

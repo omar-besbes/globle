@@ -3,12 +3,12 @@ import { loadData, type DataPack } from './game/data';
 import { useGame } from './game/useGame';
 import { formatDistance, heatColor } from './game/color';
 import { GlobeView } from './ui/GlobeView';
-import { GuessInput } from './ui/GuessInput';
+import { GuessInput, type Feedback } from './ui/GuessInput';
 import { GuessList } from './ui/GuessList';
 import { ScopePanel } from './ui/ScopePanel';
 import { SettingsPanel } from './ui/SettingsPanel';
 import { StatsPanel } from './ui/StatsPanel';
-import { HINTS } from './game/types';
+import { HINTS, type Country } from './game/types';
 
 type Panel = 'scope' | 'stats' | 'settings' | null;
 
@@ -29,7 +29,14 @@ export default function App() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [panel, setPanel] = useState<Panel>(null);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<Feedback>({ kind: 'none' });
+  const [pending, setPending] = useState<{ input: string; candidates: Country[] } | null>(null);
+  const [clearSignal, setClearSignal] = useState(0);
+
+  const resetFeedback = () => {
+    setFeedback((f) => (f.kind === 'none' ? f : { kind: 'none' }));
+    setPending((p) => (p === null ? p : null));
+  };
   const [focusId, setFocusId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -58,17 +65,38 @@ export default function App() {
     setMenuOpen(false);
   };
 
-  const submit = (raw: string) => {
-    if (!data) return;
-    const res = game.guess(raw);
+  const record = (country: Country, raw: string) => {
+    const res = game.guess(country, raw);
     if (res.ok) {
-      setError(null);
+      resetFeedback();
+      setClearSignal((n) => n + 1);
       setFocusId(settings.spinOnGuess ? res.guess.countryId : null);
+    } else if (res.reason === 'duplicate') {
+      setFeedback({ kind: 'duplicate', country });
+      setPending(null);
+    }
+  };
+
+  const submit = (raw: string) => {
+    if (!data || !raw.trim()) return;
+
+    // Enter on an unchanged field takes the country that was proposed, so a
+    // correction can be accepted without reaching for the mouse. Only when there
+    // is one proposal - Enter must not pick between two arbitrarily.
+    if (pending && raw.trim() === pending.input && pending.candidates.length === 1) {
+      record(pending.candidates[0], raw);
       return;
     }
-    setError(res.reason === 'unknown'
-      ? `No country matches “${raw.trim()}”.`
-      : res.reason === 'duplicate' ? 'You already guessed that one.' : null);
+
+    const m = data.match(raw);
+    if (m.kind === 'exact') { record(m.country, raw); return; }
+    if (m.kind === 'none') {
+      setFeedback({ kind: 'unknown' });
+      setPending(null);
+      return;
+    }
+    setFeedback({ kind: 'suggest', candidates: m.candidates });
+    setPending({ input: raw.trim(), candidates: m.candidates });
   };
 
   if (loadError) return <div className="boot error">Could not load map data: {loadError}</div>;
@@ -117,7 +145,14 @@ export default function App() {
           </div>
 
           {!over && (
-            <GuessInput data={data} disabled={over} error={error} onSubmit={submit} />
+            <GuessInput
+              disabled={over}
+              feedback={feedback}
+              clearSignal={clearSignal}
+              onSubmit={submit}
+              onAccept={(c) => record(c, pending?.input ?? c.name)}
+              onEdit={resetFeedback}
+            />
           )}
 
           {!over && hintsUsed >= 2 && target && (

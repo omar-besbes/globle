@@ -7,7 +7,7 @@ import {
   DEFAULT_SETTINGS, loadGames, loadSettings, saveGames, saveSettings,
 } from './storage';
 import { HINTS } from './types';
-import type { GameRecord, Guess, Settings } from './types';
+import type { Country, GameRecord, Guess, Settings } from './types';
 
 const CURRENT_KEY = 'globle:current';
 const newId = () =>
@@ -15,7 +15,7 @@ const newId = () =>
 
 export type GuessResult =
   | { ok: true; guess: Guess; solved: boolean }
-  | { ok: false; reason: 'unknown' | 'duplicate' | 'empty' };
+  | { ok: false; reason: 'duplicate' | 'empty' };
 
 export function useGame(data: DataPack | null) {
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
@@ -112,18 +112,19 @@ export function useGame(data: DataPack | null) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, data, current, pool.length]);
 
-  const guess = useCallback((input: string): GuessResult => {
+  /**
+   * Records a guess. The country has already been resolved by the caller, but
+   * the raw text is kept as typed - a misspelling the player accepted a
+   * correction for is part of the record, not noise.
+   */
+  const guess = useCallback((country: Country, input: string): GuessResult => {
     if (!data || !current || current.outcome) return { ok: false, reason: 'empty' };
-    const trimmed = input.trim();
-    if (!trimmed) return { ok: false, reason: 'empty' };
-    const country = data.resolve(trimmed);
-    if (!country) return { ok: false, reason: 'unknown' };
     if (current.guesses.some((g) => g.countryId === country.id)) {
       return { ok: false, reason: 'duplicate' };
     }
 
     const entry: Guess = {
-      input: trimmed,
+      input: input.trim(),
       at: Date.now(),
       countryId: country.id,
       distanceKm: data.distanceKm(country.id, current.targetId),

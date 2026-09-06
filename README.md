@@ -23,13 +23,22 @@ the whole time, hints or not, and reveals the answer in purple. Hints are
 recorded and count against you in the stats — taking one is evidence the country
 was hard for you.
 
-Input is forgiving. Exact names and aliases first (`holland`, `burma`, `uk`,
-`drc`, `ivory coast`), then unique prefixes, then near misses: `swizerland`,
-`phillipines`, `kenia`, `untied states` all land. Tolerance scales with what you
-typed — a four-letter word gets none, because Iran and Iraq are one edit apart —
-and a typo is only accepted when exactly one country is closest. `sambia`
-resolves to Zambia; `ambia` ties Zambia with Gambia and is rejected rather than
-scoring a guess against the wrong country.
+There is no autocomplete dropdown. You type a country and press Enter, and one
+of three things happens:
+
+- **It is clear** — an exact name or alias (`holland`, `burma`, `uk`, `drc`,
+  `ivory coast`) or a prefix only one country has (`switz`, `bosnia`,
+  `united arab`) — and the guess is taken.
+- **It is close** — `cjina`, `swizerland`, `phillipines`, `untied states` — and
+  you are asked: *maybe you meant **China**?* Press Enter again or click the name
+  to accept, or keep typing. A tie lists the rivals (`ambia` offers Gambia or
+  Zambia) and Enter will not choose between them.
+- **It resembles nothing** — *no such country exists*.
+
+A misspelling is never scored against a country you did not confirm, which is
+what lets the tolerance be generous rather than cautious: an unwanted suggestion
+costs a glance, where an unwanted guess costs a turn. Whatever you actually typed
+is what goes into the history, even when you accept a correction.
 
 Distance is the **minimum distance between borders**, not between centroids,
 which is what makes the hot/cold signal feel right — Portugal and Spain are

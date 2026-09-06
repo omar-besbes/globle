@@ -51,45 +51,55 @@ for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) if (dist[at(i, j)] =
 check('few zero pairs', missing < 400, `${missing} zero-distance pairs`);
 
 // --- typed input ----------------------------------------------------------
-const { resolve, suggest } = buildMatcher(countries);
-const R = (q: string) => resolve(q)?.id ?? null;
+const { match } = buildMatcher(countries);
+/** The country a submission would guess outright, or null if it would not. */
+const taken = (q: string) => { const m = match(q); return m.kind === 'exact' ? m.country.id : null; };
+const proposed = (q: string) => {
+  const m = match(q);
+  return m.kind === 'suggest' ? m.candidates.map((c) => c.id) : null;
+};
 
-// Aliases people actually type.
-const aliases: Array<[string, string]> = [
-  ['holland', 'NLD'], ['burma', 'MMR'], ['uk', 'GBR'], ['usa', 'USA'],
+// Aliases and prefixes people type on purpose are taken as the guess.
+const accepted: Array<[string, string]> = [
+  ['France', 'FRA'], ['holland', 'NLD'], ['burma', 'MMR'], ['uk', 'GBR'], ['usa', 'USA'],
   ['ivory coast', 'CIV'], ['south korea', 'KOR'], ['drc', 'COD'], ['east timor', 'TLS'],
+  ['switz', 'CHE'], ['bosnia', 'BIH'], ['united arab', 'ARE'], ['brasil', 'BRA'],
 ];
-for (const [q, id] of aliases) check(`alias "${q}"`, R(q) === id, `-> ${R(q)}`);
+for (const [q, id] of accepted) check(`accepts "${q}"`, taken(q) === id, `-> ${taken(q)}`);
 
-// Typos and misspellings that should still land.
-const typos: Array<[string, string]> = [
-  ['brasil', 'BRA'], ['phillipines', 'PHL'], ['swizerland', 'CHE'], ['kenia', 'KEN'],
+// Misspellings are offered, never taken - the player confirms the correction.
+const suggested: Array<[string, string]> = [
+  ['cjina', 'CHN'], ['phillipines', 'PHL'], ['swizerland', 'CHE'], ['kenia', 'KEN'],
   ['untied states', 'USA'], ['germny', 'DEU'], ['argentna', 'ARG'], ['netherlads', 'NLD'],
   ['madagascer', 'MDG'], ['kazakstan', 'KAZ'],
 ];
-for (const [q, id] of typos) check(`typo "${q}"`, R(q) === id, `-> ${R(q)}`);
+for (const [q, id] of suggested) {
+  check(`suggests "${q}"`, proposed(q)?.[0] === id, `-> ${proposed(q)?.join('/') ?? match(q).kind}`);
+  check(`does not take "${q}"`, taken(q) === null);
+}
 
-// Near-miss pairs must never silently resolve to their neighbour.
+// Genuine ties list the rivals instead of picking one.
+check('"ambia" offers both', proposed('ambia')?.join() === 'GMB,ZMB', `-> ${proposed('ambia')}`);
+check('"united" offers rivals', (proposed('united')?.length ?? 0) > 1, `-> ${proposed('united')}`);
+
+// Near-miss pairs still resolve to themselves when typed correctly.
 const exactPairs = ['Iran', 'Iraq', 'Niger', 'Nigeria', 'Austria', 'Australia', 'Chad', 'Chile',
   'China', 'Mali', 'Malta', 'Zambia', 'Gambia', 'Guinea', 'Guyana', 'Oman', 'Romania',
   'India', 'Indonesia', 'Slovakia', 'Slovenia', 'Norway', 'Nauru'];
 for (const name of exactPairs) {
   const c = countries.find((x) => x.name === name);
-  check(`exact "${name}"`, c !== undefined && R(name) === c.id, `-> ${R(name)}`);
+  check(`exact "${name}"`, c !== undefined && taken(name) === c.id, `-> ${taken(name)}`);
 }
 
-// Ambiguity and nonsense are rejected rather than guessed at.
-for (const q of ['ambia', 'united', 'qqqqqq', 'zzzz', 'the country that is not', 'mata']) {
-  check(`rejects "${q}"`, R(q) === null, `-> ${R(q)}`);
+// Text resembling nothing says so rather than proposing something.
+for (const q of ['zzzz', 'qqqqqq', 'the country that is not', '   ']) {
+  check(`no match for "${q.trim() || 'blank'}"`, match(q).kind === 'none', `-> ${match(q).kind}`);
 }
-check('rejects empty', R('   ') === null);
 
 /**
- * The property that matters: mangling a country's name by one character must
- * never quietly score a guess against a DIFFERENT country. Resolving to the
- * intended country or to nothing are both fine, and so is completing a prefix -
- * "austra" is a reasonable start on Australia even though it is also Austria
- * with a letter dropped. Anything else is the matcher being too eager.
+ * The property that matters now that near misses are only ever proposed: a
+ * one-character slip must never be TAKEN as a different country. Being offered
+ * one is fine - that is a question, not a guess - and so is completing a name.
  */
 function mutationsOf(name: string): string[] {
   const out: string[] = [];
@@ -103,18 +113,14 @@ function mutationsOf(name: string): string[] {
 const overeager: string[] = [];
 for (const c of countries) {
   for (const q of mutationsOf(normalize(c.name))) {
-    const got = resolve(q);
-    if (!got || got.id === c.id) continue;
-    if (normalize(got.name).startsWith(q)) continue; // completing a real name
-    overeager.push(`"${q}" (${c.name}) -> ${got.name}`);
+    const got = taken(q);
+    if (!got || got === c.id) continue;
+    if (normalize(byId.get(got)!.name).startsWith(q)) continue; // completing a real name
+    overeager.push(`"${q}" (${c.name}) -> ${byId.get(got)!.name}`);
   }
 }
-check('one-character slips never pick another country', overeager.length === 0,
+check('one-character slips are never taken as another country', overeager.length === 0,
   overeager.length ? `${overeager.length} cases, e.g. ${overeager.slice(0, 4).join('; ')}` : '');
-
-check('suggestions rank the typo target first', suggest('brasil')[0]?.id === 'BRA',
-  `-> ${suggest('brasil')[0]?.name}`);
-check('suggestions cover prefixes', suggest('unit').some((c) => c.id === 'GBR'));
 
 // --- save migration ------------------------------------------------------
 // A v1 export must survive the upgrade: hints did not exist, and the two

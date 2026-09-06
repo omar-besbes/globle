@@ -1,33 +1,32 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import type { DataPack } from '../game/data';
+import { useEffect, useRef, useState } from 'react';
 import type { Country } from '../game/types';
 
+/** What the last submission produced, shown under the field. */
+export type Feedback =
+  | { kind: 'none' }
+  | { kind: 'unknown' }
+  | { kind: 'duplicate'; country: Country }
+  | { kind: 'suggest'; candidates: Country[] };
+
 interface Props {
-  data: DataPack;
   disabled: boolean;
-  error: string | null;
+  feedback: Feedback;
+  /** Bumped when a guess is recorded; that is the only time the field clears. */
+  clearSignal: number;
   onSubmit(value: string): void;
+  onAccept(country: Country): void;
+  onEdit(): void;
 }
 
-export function GuessInput({ data, disabled, error, onSubmit }: Props) {
+export function GuessInput({ disabled, feedback, clearSignal, onSubmit, onAccept, onEdit }: Props) {
   const [value, setValue] = useState('');
-  const [active, setActive] = useState(0);
-  const [open, setOpen] = useState(false);
   const input = useRef<HTMLInputElement>(null);
 
-  const suggestions = useMemo<Country[]>(
-    () => (open && value.trim() ? data.suggest(value, 6) : []),
-    [data, value, open]);
-
-  useEffect(() => setActive(0), [value]);
   useEffect(() => { if (!disabled) input.current?.focus(); }, [disabled]);
 
-  const submit = (raw: string) => {
-    if (!raw.trim()) return;
-    onSubmit(raw);
-    setValue('');
-    setOpen(false);
-  };
+  // Only a recorded guess clears the field. A question about what was meant
+  // leaves the text in place so it can be corrected or confirmed.
+  useEffect(() => { setValue(''); }, [clearSignal]);
 
   return (
     <div className="guess-input">
@@ -39,39 +38,41 @@ export function GuessInput({ data, disabled, error, onSubmit }: Props) {
         placeholder={disabled ? 'Round over' : 'Type a country…'}
         autoComplete="off"
         autoCorrect="off"
+        autoCapitalize="off"
         spellCheck={false}
-        aria-label="Guess a country"
-        onChange={(e) => { setValue(e.target.value); setOpen(true); }}
-        onFocus={() => setOpen(true)}
-        onBlur={() => window.setTimeout(() => setOpen(false), 120)}
+        aria-label="Type a country"
+        onChange={(e) => { setValue(e.target.value); onEdit(); }}
         onKeyDown={(e) => {
-          if (e.key === 'ArrowDown') { e.preventDefault(); setActive((i) => Math.min(i + 1, suggestions.length - 1)); }
-          else if (e.key === 'ArrowUp') { e.preventDefault(); setActive((i) => Math.max(i - 1, 0)); }
-          else if (e.key === 'Escape') setOpen(false);
-          else if (e.key === 'Enter') {
-            e.preventDefault();
-            submit(suggestions[active]?.name ?? value);
-          }
+          if (e.key !== 'Enter') return;
+          e.preventDefault();
+          onSubmit(value);
         }}
       />
-      {suggestions.length > 0 && (
-        <ul className="suggestions" role="listbox">
-          {suggestions.map((c, i) => (
-            <li
-              key={c.id}
-              role="option"
-              aria-selected={i === active}
-              className={i === active ? 'active' : ''}
-              onMouseDown={(e) => { e.preventDefault(); submit(c.name); }}
-              onMouseEnter={() => setActive(i)}
-            >
-              <span>{c.name}</span>
-              <span className="suggestion-meta">{c.subregion}</span>
-            </li>
-          ))}
-        </ul>
+
+      {feedback.kind === 'unknown' && (
+        <p className="input-note error">No such country exists.</p>
       )}
-      {error && <p className="input-error">{error}</p>}
+
+      {feedback.kind === 'duplicate' && (
+        <p className="input-note">
+          You already guessed <strong>{feedback.country.name}</strong>.
+        </p>
+      )}
+
+      {feedback.kind === 'suggest' && (
+        <p className="input-note">
+          Maybe you meant{' '}
+          {feedback.candidates.map((c, i) => (
+            <span key={c.id}>
+              {i > 0 && ' or '}
+              <button className="did-you-mean" onClick={() => onAccept(c)}>{c.name}</button>
+            </span>
+          ))}{'?'}
+          {feedback.candidates.length === 1 && (
+            <span className="input-hint"> Press Enter again to accept.</span>
+          )}
+        </p>
+      )}
     </div>
   );
 }
